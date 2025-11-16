@@ -35,8 +35,25 @@ def format_response_for_telegram(response: str) -> str:
     """
     Форматирование ответа ChatGPT для Telegram.
     Исправляет проблему склеивания кодовых блоков с текстом после них.
+    Оборачивает селекторы и код в блоки форматирования.
     """
     try:
+        # Оборачиваем CSS селекторы и подобные элементы в инлайн-код
+        # Паттерны для поиска селекторов и кода
+        patterns = [
+            (r"(#[\w-]+)", r"`\1`"),  # ID селекторы: #prompt-textarea
+            (r"(\w+\[[\w*=\"'-]+\])", r"`\1`"),  # Атрибутные селекторы: textarea[placeholder*="Message"]
+            (r"(div\[contenteditable=\"true\"\])", r"`\1`"),  # Специфичные селекторы
+            (r"(\btextarea\b(?!\[))", r"`\1`"),  # Одиночные теги
+            (r"(\binput\b(?!\[))", r"`\1`"),  # Одиночные теги
+        ]
+        
+        for pattern, replacement in patterns:
+            response = re.sub(pattern, replacement, response)
+        
+        # Убираем двойные обратные кавычки если они появились
+        response = re.sub(r'`+', '`', response)
+        
         # Ищем паттерн "Копировать код" и извлекаем код после него
         if "Копировать код" in response or "Copy code" in response:
             # Разбиваем на части по "Копировать код"
