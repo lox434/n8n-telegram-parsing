@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: chatgpt-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./chromium_profile:/app/chromium_profile
+      - ./user_projects:/app/user_projects
+      - ./temp_photos:/app/temp_photos
+      - ./debug:/app/debug
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CHATGPT_PROFILE_PATH=/app/chromium_profile
+      - HEADLESS=true
+    shm_size: '2gb'
