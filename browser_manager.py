@@ -151,10 +151,21 @@ class BrowserManager:
                 # Отправка фото с текстом
                 response = await self._send_photo_and_get_response(page, photo_path, caption)
                 
-                # Проверяем наличие файлов в ответе
+                # Проверяем наличие файлов и изображений в ответе
                 downloaded_files = []
-                files = await self._check_for_files(page)
                 
+                # Сначала проверяем сгенерированные изображения
+                images = await self._check_for_generated_images(page, log=True)
+                if images:
+                    download_path = f"./temp_downloads/{username}"
+                    
+                    for idx, share_button in enumerate(images):
+                        filepath = await self._download_generated_image(page, share_button, download_path, idx)
+                        if filepath:
+                            downloaded_files.append(filepath)
+                
+                # Затем проверяем обычные файлы
+                files = await self._check_for_files(page)
                 if files:
                     logger.info(f"Обнаружено файлов для скачивания: {len(files)}")
                     download_path = f"./temp_downloads/{username}"
@@ -254,10 +265,21 @@ class BrowserManager:
                 # Отправка запроса
                 response = await self._send_query_and_get_response(page, query)
                 
-                # Проверяем наличие файлов в ответе
+                # Проверяем наличие файлов и изображений в ответе
                 downloaded_files = []
-                files = await self._check_for_files(page)
                 
+                # Сначала проверяем сгенерированные изображения
+                images = await self._check_for_generated_images(page, log=True)
+                if images:
+                    download_path = f"./temp_downloads/{username}"
+                    
+                    for idx, share_button in enumerate(images):
+                        filepath = await self._download_generated_image(page, share_button, download_path, idx)
+                        if filepath:
+                            downloaded_files.append(filepath)
+                
+                # Затем проверяем обычные файлы
+                files = await self._check_for_files(page)
                 if files:
                     logger.info(f"Обнаружено файлов для скачивания: {len(files)}")
                     download_path = f"./temp_downloads/{username}"
@@ -540,6 +562,26 @@ class BrowserManager:
             # Продолжаем работу даже если не удалось создать проект
     
 
+    async def _check_for_generated_images(self, page: Page, log: bool = False) -> list:
+        """Проверка наличия сгенерированных изображений в ответе ChatGPT"""
+        try:
+            # Ищем кнопки "Поделиться" для изображений
+            share_buttons = await page.query_selector_all('button[aria-label*="Поделиться этим изображением"]')
+            
+            if not share_buttons:
+                # Пробуем альтернативные селекторы
+                share_buttons = await page.query_selector_all('button[aria-label*="Share this image"]')
+            
+            # Логируем только если запрошено
+            if log and len(share_buttons) > 0:
+                logger.info(f"Найдено изображений для скачивания: {len(share_buttons)}")
+            
+            return share_buttons
+            
+        except Exception as e:
+            logger.error(f"Ошибка проверки изображений: {e}")
+            return []
+    
     async def _check_for_files(self, page: Page) -> list:
         """Проверка наличия файлов в ответе ChatGPT"""
         try:
@@ -576,6 +618,97 @@ class BrowserManager:
         except Exception as e:
             logger.error(f"Ошибка проверки файлов: {e}")
             return []
+    
+    async def _download_generated_image(self, page: Page, share_button, download_path: str, index: int = 0) -> str:
+        """Скачивание сгенерированного изображения через кнопку 'Поделиться'"""
+        try:
+            logger.info(f"Скачивание изображения #{index + 1}...")
+            
+            # Создаем директорию для загрузок
+            os.makedirs(download_path, exist_ok=True)
+            
+            # Нажимаем кнопку "Поделиться"
+            logger.info("Нажатие кнопки 'Поделиться'...")
+            await share_button.click()
+            await asyncio.sleep(2)
+            
+            # Ищем кнопку "Скачать" в появившемся окне
+            download_button = None
+            download_selectors = [
+                'button:has-text("Скачать")',
+                'button:has-text("Download")',
+                'div.flex.items-center.justify-center svg[viewBox="0 0 20 20"]',  # SVG иконка скачивания
+            ]
+            
+            for selector in download_selectors:
+                try:
+                    # Ждем появления кнопки скачивания
+                    download_button = await page.wait_for_selector(selector, timeout=5000, state='visible')
+                    if download_button:
+                        logger.info(f"Найдена кнопка скачивания: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not download_button:
+                # Пробуем найти по структуре (div с иконкой скачивания)
+                logger.info("Поиск кнопки скачивания по структуре...")
+                download_containers = await page.query_selector_all('div.flex.h-16.w-16.items-center.justify-center')
+                
+                for container in download_containers:
+                    # Проверяем есть ли внутри SVG с path содержащим координаты иконки скачивания
+                    svg = await container.query_selector('svg')
+                    if svg:
+                        # Это наша кнопка скачивания
+                        download_button = container
+                        logger.info("Найдена кнопка скачивания по структуре")
+                        break
+            
+            if not download_button:
+                logger.error("Не найдена кнопка скачивания в окне 'Поделиться'")
+                # Закрываем окно (ESC)
+                await page.keyboard.press('Escape')
+                return None
+            
+            # Настраиваем обработчик скачивания с увеличенным таймаутом
+            logger.info("Ожидание скачивания файла...")
+            
+            try:
+                async with page.expect_download(timeout=180000) as download_info:  # 3 минуты таймаут
+                    # Кликаем на кнопку скачивания
+                    await download_button.click()
+                    logger.info("Клик по кнопке скачивания выполнен, ожидание файла...")
+                
+                download = await download_info.value
+                
+                # Получаем имя файла
+                filename = download.suggested_filename or f'generated_image_{index + 1}.png'
+                filepath = os.path.join(download_path, filename)
+                
+                # Сохраняем файл
+                logger.info(f"Сохранение файла: {filepath}")
+                await download.save_as(filepath)
+                logger.info(f"✓ Изображение успешно скачано: {filepath}")
+                
+                # Закрываем окно "Поделиться"
+                await page.keyboard.press('Escape')
+                await asyncio.sleep(1)
+                
+                return filepath
+                
+            except asyncio.TimeoutError:
+                logger.error("Таймаут при ожидании скачивания изображения (3 минуты)")
+                await page.keyboard.press('Escape')
+                return None
+                
+        except Exception as e:
+            logger.error(f"Ошибка скачивания изображения: {e}", exc_info=True)
+            # Пытаемся закрыть окно в случае ошибки
+            try:
+                await page.keyboard.press('Escape')
+            except:
+                pass
+            return None
     
     async def _download_file(self, page: Page, file_info: dict, download_path: str) -> str:
         """Скачивание файла из ChatGPT"""
@@ -765,10 +898,17 @@ class BrowserManager:
             
             previous_length = 0
             stable_count = 0
+            has_images = False
             
             # Ждем появления и завершения генерации ответа
             for i in range(120):
                 await asyncio.sleep(1)
+                
+                # Проверяем наличие изображений (кнопки "Поделиться")
+                images = await self._check_for_generated_images(page)
+                if images and not has_images:
+                    logger.info(f"✓ Обнаружена генерация изображения!")
+                    has_images = True
                 
                 responses = await page.query_selector_all(response_selector)
                 if responses:
@@ -776,12 +916,18 @@ class BrowserManager:
                     response_text = await last_response.inner_text()
                     current_length = len(response_text)
                     
-                    # Проверяем что текст перестал расти (генерация завершена)
-                    if current_length > 10 and current_length == previous_length:
+                    # Если есть изображение и текст не растёт - генерация завершена
+                    if has_images and current_length == previous_length:
+                        stable_count += 1
+                        if stable_count >= 5:
+                            logger.info(f"✓ Генерация изображения завершена. Текст: {current_length} символов")
+                            return response_text if current_length > 0 else "Изображение создано"
+                    # Если только текст без изображений
+                    elif current_length > 10 and current_length == previous_length:
                         stable_count += 1
                         # Если длина не меняется 5 секунд подряд - генерация завершена
                         if stable_count >= 5:
-                            logger.info(f"Генерация завершена. Длина ответа: {current_length}")
+                            logger.info(f"✓ Генерация завершена. Длина ответа: {current_length}")
                             return response_text
                     else:
                         stable_count = 0
@@ -789,9 +935,18 @@ class BrowserManager:
                     previous_length = current_length
                     
                     if i % 10 == 0 and i > 0:
-                        logger.info(f"Генерация продолжается... ({current_length} символов)")
+                        img_count = len(images) if images else 0
+                        logger.info(f"Генерация продолжается... (текст: {current_length} симв.{', изображение: да' if img_count > 0 else ''})")
             
             # Если вышли по таймауту, возвращаем что есть
+            if has_images:
+                logger.info("Таймаут, но изображение сгенерировано")
+                responses = await page.query_selector_all(response_selector)
+                if responses:
+                    response_text = await responses[-1].inner_text()
+                    return response_text if len(response_text) > 0 else "Изображение создано"
+                return "Изображение создано"
+            
             if previous_length > 10:
                 logger.info(f"Таймаут, но есть ответ: {previous_length} символов")
                 responses = await page.query_selector_all(response_selector)
@@ -893,9 +1048,16 @@ class BrowserManager:
             
             previous_length = 0
             stable_count = 0
+            has_images = False
             
             for i in range(120):
                 await asyncio.sleep(1)
+                
+                # Проверяем наличие изображений (кнопки "Поделиться")
+                images = await self._check_for_generated_images(page)
+                if images and not has_images:
+                    logger.info(f"✓ Обнаружена генерация изображения!")
+                    has_images = True
                 
                 responses = await page.query_selector_all(response_selector)
                 if responses:
@@ -903,10 +1065,17 @@ class BrowserManager:
                     response_text = await last_response.inner_text()
                     current_length = len(response_text)
                     
-                    if current_length > 10 and current_length == previous_length:
+                    # Если есть изображение и текст не растёт - генерация завершена
+                    if has_images and current_length == previous_length:
                         stable_count += 1
                         if stable_count >= 5:
-                            logger.info(f"Генерация завершена. Длина ответа: {current_length}")
+                            logger.info(f"✓ Генерация изображения завершена. Текст: {current_length} символов")
+                            return response_text if current_length > 0 else "Изображение создано"
+                    # Если только текст без изображений
+                    elif current_length > 10 and current_length == previous_length:
+                        stable_count += 1
+                        if stable_count >= 5:
+                            logger.info(f"✓ Генерация завершена. Длина ответа: {current_length}")
                             return response_text
                     else:
                         stable_count = 0
@@ -914,7 +1083,17 @@ class BrowserManager:
                     previous_length = current_length
                     
                     if i % 10 == 0 and i > 0:
-                        logger.info(f"Генерация продолжается... ({current_length} символов)")
+                        img_count = len(images) if images else 0
+                        logger.info(f"Генерация продолжается... (текст: {current_length} симв.{', изображение: да' if img_count > 0 else ''})")
+            
+            # Если вышли по таймауту, возвращаем что есть
+            if has_images:
+                logger.info("Таймаут, но изображение сгенерировано")
+                responses = await page.query_selector_all(response_selector)
+                if responses:
+                    response_text = await responses[-1].inner_text()
+                    return response_text if len(response_text) > 0 else "Изображение создано"
+                return "Изображение создано"
             
             if previous_length > 10:
                 logger.info(f"Таймаут, но есть ответ: {previous_length} символов")

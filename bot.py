@@ -281,11 +281,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for filepath in downloaded_files:
                 try:
-                    # Отправляем файл в Telegram
-                    with open(filepath, 'rb') as f:
-                        await update.message.reply_document(document=f, filename=os.path.basename(filepath))
+                    # Проверяем тип файла по расширению
+                    file_ext = os.path.splitext(filepath)[1].lower()
                     
-                    logger.info(f"Файл отправлен: {filepath}")
+                    # Если это изображение - отправляем как фото
+                    if file_ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+                        with open(filepath, 'rb') as f:
+                            await update.message.reply_photo(photo=f)
+                        logger.info(f"Изображение отправлено: {filepath}")
+                    else:
+                        # Остальные файлы отправляем как документы
+                        with open(filepath, 'rb') as f:
+                            await update.message.reply_document(document=f, filename=os.path.basename(filepath))
+                        logger.info(f"Файл отправлен: {filepath}")
                     
                     # Удаляем файл после отправки
                     os.remove(filepath)
@@ -369,11 +377,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for filepath in downloaded_files:
                 try:
-                    # Отправляем файл в Telegram
-                    with open(filepath, 'rb') as f:
-                        await update.message.reply_document(document=f, filename=os.path.basename(filepath))
+                    # Проверяем тип файла по расширению
+                    file_ext = os.path.splitext(filepath)[1].lower()
                     
-                    logger.info(f"Файл отправлен: {filepath}")
+                    # Если это изображение - отправляем как фото
+                    if file_ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+                        with open(filepath, 'rb') as f:
+                            await update.message.reply_photo(photo=f)
+                        logger.info(f"Изображение отправлено: {filepath}")
+                    else:
+                        # Остальные файлы отправляем как документы
+                        with open(filepath, 'rb') as f:
+                            await update.message.reply_document(document=f, filename=os.path.basename(filepath))
+                        logger.info(f"Файл отправлен: {filepath}")
                     
                     # Удаляем файл после отправки
                     os.remove(filepath)
