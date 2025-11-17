@@ -3,6 +3,7 @@ import asyncio
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from pathlib import Path
 import logging
+from crypto_module import CryptoModule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -679,7 +680,16 @@ class BrowserManager:
             await asyncio.sleep(3)
             await self._save_debug_snapshot(page, "Перед поиском поля ввода")
             
-            query_to_send = query
+            # ШИФРОВАНИЕ: создаем зашифрованный промпт с инструкцией (если включено)
+            use_encryption = os.getenv('USE_ENCRYPTION', 'false').lower() == 'true'
+            
+            if use_encryption:
+                encrypted_prompt = CryptoModule.create_encrypted_prompt(query)
+                logger.info(f"Запрос зашифрован: {len(query)} -> {len(encrypted_prompt)} символов")
+                query_to_send = encrypted_prompt
+            else:
+                logger.info("Шифрование отключено, отправляем обычный запрос")
+                query_to_send = query
             
             # Увеличенное время ожидания и несколько вариантов селекторов
             input_selectors = [
@@ -782,7 +792,13 @@ class BrowserManager:
                         # Если длина не меняется 5 секунд подряд - генерация завершена
                         if stable_count >= 5:
                             logger.info(f"Генерация завершена. Длина ответа: {current_length}")
-                            return response_text
+                            # ДЕШИФРОВАНИЕ: расшифровываем ответ от AI (если шифрование включено)
+                            if use_encryption:
+                                decrypted_response = CryptoModule.decrypt(response_text)
+                                logger.info(f"Ответ дешифрован: {current_length} -> {len(decrypted_response)} символов")
+                                return decrypted_response
+                            else:
+                                return response_text
                     else:
                         stable_count = 0
                     
@@ -798,12 +814,19 @@ class BrowserManager:
                 if responses:
                     response_text = await responses[-1].inner_text()
                     
+                    # ДЕШИФРОВАНИЕ: расшифровываем ответ от AI (если шифрование включено)
+                    if use_encryption:
+                        decrypted_response = CryptoModule.decrypt(response_text)
+                        logger.info(f"Ответ дешифрован (таймаут): {previous_length} -> {len(decrypted_response)} символов")
+                    else:
+                        decrypted_response = response_text
+                    
                     # Проверяем наличие файлов
                     files = await self._check_for_files(page)
                     if files:
-                        response_text += f"\n\n📎 Обнаружено файлов: {len(files)}"
+                        decrypted_response += f"\n\n📎 Обнаружено файлов: {len(files)}"
                     
-                    return response_text
+                    return decrypted_response
             
             return "Не удалось получить ответ от ChatGPT (таймаут)"
             
@@ -815,6 +838,9 @@ class BrowserManager:
         """Отправка фото с текстом и получение ответа"""
         try:
             logger.info("Поиск кнопки загрузки файла...")
+            
+            # ШИФРОВАНИЕ: проверяем настройки шифрования
+            use_encryption = os.getenv('USE_ENCRYPTION', 'false').lower() == 'true'
             
             # Ищем кнопку загрузки файла (скрепка/плюс)
             upload_button_selectors = [
@@ -861,7 +887,15 @@ class BrowserManager:
             
             # Если есть текст, добавляем его
             if caption:
-                logger.info(f"Добавление текста к фото: {caption}")
+                # ШИФРОВАНИЕ: шифруем текст если включено
+                if use_encryption:
+                    encrypted_caption = CryptoModule.create_encrypted_prompt(caption)
+                    logger.info(f"Текст к фото зашифрован: {len(caption)} -> {len(encrypted_caption)} символов")
+                    caption_to_send = encrypted_caption
+                else:
+                    caption_to_send = caption
+                
+                logger.info(f"Добавление текста к фото")
                 
                 input_selectors = [
                     '#prompt-textarea',
@@ -873,7 +907,7 @@ class BrowserManager:
                 for selector in input_selectors:
                     try:
                         await page.wait_for_selector(selector, timeout=3000, state='attached')
-                        await page.fill(selector, caption)
+                        await page.fill(selector, caption_to_send)
                         logger.info(f"Текст добавлен через селектор: `{selector}`")
                         break
                     except:
@@ -907,7 +941,13 @@ class BrowserManager:
                         stable_count += 1
                         if stable_count >= 5:
                             logger.info(f"Генерация завершена. Длина ответа: {current_length}")
-                            return response_text
+                            # ДЕШИФРОВАНИЕ: расшифровываем ответ от AI (если шифрование включено)
+                            if use_encryption:
+                                decrypted_response = CryptoModule.decrypt(response_text)
+                                logger.info(f"Ответ на фото дешифрован: {current_length} -> {len(decrypted_response)} символов")
+                                return decrypted_response
+                            else:
+                                return response_text
                     else:
                         stable_count = 0
                     
@@ -920,7 +960,15 @@ class BrowserManager:
                 logger.info(f"Таймаут, но есть ответ: {previous_length} символов")
                 responses = await page.query_selector_all(response_selector)
                 if responses:
-                    return await responses[-1].inner_text()
+                    response_text = await responses[-1].inner_text()
+                    
+                    # ДЕШИФРОВАНИЕ: расшифровываем ответ от AI (если шифрование включено)
+                    if use_encryption:
+                        decrypted_response = CryptoModule.decrypt(response_text)
+                        logger.info(f"Ответ на фото дешифрован (таймаут): {previous_length} -> {len(decrypted_response)} символов")
+                        return decrypted_response
+                    else:
+                        return response_text
             
             return "Не удалось получить ответ от ChatGPT (таймаут)"
             
